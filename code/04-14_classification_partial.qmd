@@ -183,7 +183,7 @@ Cons:
 #| message: false
 #| warning: false
 
-#install.packages("ranger")
+install.packages("ranger")
 
 library(tidymodels)
 library(tidyverse)
@@ -207,7 +207,18 @@ For that, we will categorize **strength_gtex** into three classes based on quant
   - If strength_gtex > 66% quantile, then it becomes "High"  
   
 ```{r}
-weather_class 
+weather_class = weather %>%
+  mutate(strength_gtex_class = cut_number(strength_gtex,
+                                          n = 3,
+                                          labels = c("Low",
+                                                     "Medium",
+                                                     "High")
+                                          )) %>%
+  dplyr::select(year,
+                 site,
+                 strength_gtex,
+                 strength_gtex_class,
+                 everything() )
 
 weather_class
 ```
@@ -216,6 +227,11 @@ Let's visualize our resulting categorical variable, first with boxplots.
 
 ```{r}
 
+ggplot(data = weather_class,
+       aes(x = strength_gtex_class,
+          y = strength_gtex
+          )) +
+  geom_jitter()
 
 ```
 
@@ -224,7 +240,9 @@ Then, with density plots.
 ```{r}
 ggplot(data = weather_class,
        aes(x = strength_gtex,
-           color = strength_gtex_class)) 
+           color = strength_gtex_class)) + 
+  geom_density()
+```
 ```
 
 # ML workflow  
@@ -236,18 +254,19 @@ Here's where we perform **data split** and **data processing**.
 ### a. Data split  
 For data split, let's use **70% training / 30% testing**.
 
-```{r weather_split}
-# Setting seed to get reproducible results  
+```
+
+```{r}
+# Setting seed to get reproducible results
 set.seed(931735)
 
-# Setting split level  
-weather_split <- initial_split(weather_class, 
+# Setting split level
+weather_split <- initial_split(weather_class,
                                prop = .7,
-                               strata = ...)
+                               strata = strength_gtex_class) #need to use new y variable
 
 weather_split
 ```
-
 
 ```{r weather_train}
 # Setting train set 
@@ -273,7 +292,7 @@ ggplot() +
                color = "red") +
   geom_density(data = weather_test, 
                aes(x = strength_gtex),
-               color = "blue") 
+               color = "blue")
   
 ```
 
@@ -357,7 +376,7 @@ rf_spec <-
     # Specify the engine
     set_engine("ranger") %>%
     # Specifying mode  
-    set_mode()  
+    set_mode("classification")  
   
 rf_spec
 ```
@@ -462,7 +481,7 @@ First, based on accuracy:
 ```{r}
 # Based on highest accuracy
 best_accuracy <- rf_grid_result %>%
-  select_best()
+  select_best(metric = "accuracy")
 
 best_accuracy
 
@@ -475,7 +494,7 @@ Now, let's select best based on roc-auc (higher is better):
 ```{r}
 # Based on highest roc_auc
 best_roc <- rf_grid_result %>%
-  select_best()
+  select_best(metric = "roc_auc")
 
 best_roc
 
@@ -501,7 +520,7 @@ final_spec <- rand_forest(trees = best_accuracy$trees,
              importance = "permutation"
              ) %>%
     # Specifying mode  
-  set_mode()
+  set_mode("classification")
   
 
 final_spec
@@ -528,21 +547,30 @@ final_fit %>%
 ### Test set  
 Confusion matrix on **test set**:  
 ```{r}
-
+final_fit %>%
+  collect_predictions() %>%
+  conf_mat(truth = strength_gtex_class,
+           estimate = .pred_class
+           ) %>%
+  autoplot(type = "heatmap")
   
 ```
+  
 
 Metrics on the **test set**:
 ```{r}
-
+final_fit %>%
+  collect_metrics()
 ```
 Let's hand-calculate accuracy:  
 ```{r}
 #  Numerator: number of correctly classified (the diagonal)
-numerator 
+numerator = 39 + 33 + 32
 
 # Denominator: number of all observations  
-denominator 
+denominator = 39 + 20 +13 +26 + 33 +25 + 6 + 17 + 32
+
+numerator / denominator
 
 ```
 
@@ -554,9 +582,9 @@ final_fit %>%
             .pred_Low,
             .pred_Medium,
             .pred_High) %>%
-ggplot(aes(x = ..., 
-           y = ..., 
-           color = ...)) +
+ggplot(aes(x = (1 - specificity), 
+           y = (sensitivity), 
+           color = .level)) +
   geom_line(size = 1.2) +
   geom_abline(linetype = "dashed") +
   coord_equal() +
@@ -583,7 +611,8 @@ final_spec %>%
                           weather_train)) %>%
   conf_mat(truth = strength_gtex_class,
            estimate = .pred_class
-          )
+          ) %>%
+  autoplot(type = "heatmap")
   
 ```
 
@@ -595,7 +624,9 @@ final_spec %>%
       data = bake(weather_prep, 
                   weather_train)) %>%
   augment(new_data = bake(weather_prep, 
-                          weather_train)) 
+                          weather_train)) %>%
+  accuracy(truth = strength_gtex_class,
+           estimate = .pred_class)
 
 ```
 How does metrics on test compare to metrics on train?  
@@ -641,7 +672,7 @@ The variables with the **largest average decrease in accuracy** are considered *
 
 ```{r}
 final_spec %>%
-  fit(... ~ .,
+  fit(strength_gtex_class ~ .,
          data = bake(weather_prep, 
                      weather_train)) %>%
     vi() %>%
